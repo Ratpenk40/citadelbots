@@ -27,7 +27,15 @@ class Deck:
         self.cards = cards
 
     def draw_card(self):
+        if not self.cards:
+            raise RuntimeError("Cannot draw a card from an empty deck.")
         return self.cards.pop(0)
+
+    def add_card(self, card):
+        self.cards.append(card)
+
+    def add_cards(self, cards):
+        self.cards.extend(cards)
 
     def shuffle(self):
         shuffle(self.cards)
@@ -44,11 +52,15 @@ class Player:
         self.game = game
         self.first_finished = False
         self.city_completed = False
+        self.is_king = False
+        self.score = 0
 
     def __str__(self):
         return self.player_name
 
     def pick_character(self, character_deck):
+        self.character = None
+        self.available_actions = []
         character_deck.print_available_characters()
         pressed_key = poll_player_for_input(character_deck, 'character')
         character_class = character_deck.characters.pop(pressed_key)
@@ -62,17 +74,23 @@ class Player:
                 print(card)
             if self.human:
                 pressed_key = poll_player_for_input(cards_drew, 'card_draw')
-                selected_card = cards_drew[pressed_key]
+                selected_card = cards_drew.pop(pressed_key)
+                deck.add_cards(cards_drew)
             else:
-                selected_card = cards_drew[0] # for the moment only the first
+                selected_card = cards_drew.pop(0) # for the moment only the first
+                deck.add_cards(cards_drew)
             self.cards.append(selected_card)
         else: # money
             self.money += 2
 
-        print(self.print_player_status())
+        self.print_player_status()
 
     def play_district(self):
         possible_districts = [card for card in self.cards if card.value <= self.money]
+        if not possible_districts:
+            print("No district can be played.")
+            return
+
         print("Select district:")
         for i, dist in enumerate(possible_districts):
             print(f"{i}: {dist.name}, {dist.value}, {dist.color}")
@@ -97,17 +115,23 @@ class Player:
     def player_turn(self, deck):
         if self.game.assassinated == self.character.name:
             self.game.assassinated = None
+            print(f"{self.player_name}'s {self.character.name} was assassinated.")
             return
         if self.game.stolen == self.character.name:
             thief = [
-            player
-            for player in self.player.game.players
-            if player is not self.player and
-                player.character is not None
+                player
+                for player in self.game.players
+                if player is not self
+                and player.character is not None
                 and player.character.name == "Thief"
-            ][0]
-            thief.money += self.money
-            self.money = 0
+            ]
+            if thief:
+                thief[0].money += self.money
+                print(f"{thief[0].player_name} stole {self.money} gold from {self.player_name}.")
+                self.money = 0
+            self.game.stolen = None
+
+        self.character.on_turn_start()
 
         character_actions = [
             action
@@ -143,6 +167,7 @@ class Player:
                 pass
 
             self.print_player_status()
+        score(self)
 
 class Game:
     def __init__(self, n_players=2):
@@ -159,11 +184,29 @@ class Game:
         self.players = [
             Player(self.deck, name=f"Player {i+1}", game=self)
             for i in range(self.n_players)
-        ]
+        ] # is also the pick order
         self.game_finished = False
+        self.assassinated = None
+        self.stolen = None
 
+    def pick_order(self):
+        king_index = next(
+            (
+                i
+                for i, player in enumerate(self.players)
+                if player.is_king
+            ),
+            None
+        )
+        if king_index is not None:
+            self.players = self.players[king_index:] + self.players[:king_index]
+
+    
     def game_turn(self):
+        self.assassinated = None
+        self.stolen = None
         char_deck = CharacterDeck(self.n_players)
+        self.pick_order()
         for player in self.players:
             print(f"{player} must pick a character")
             player.pick_character(char_deck)
@@ -180,17 +223,34 @@ class Game:
                 player.city_completed = True
                 if not self.game_finished:
                     self.game_finished = True
-                    player.first_finish = True
+                    player.first_finished = True
 
     def play_game(self):
         while not self.game_finished:
             self.game_turn()
-        
+
+
+def score(player):
+    score = 0
+    colors = []
+    for dist in player.played_districts:
+        score += dist.value
+        colors += dist.color
+    colors = set(colors)
+    if len(list(colors)) >= 5:
+        score += 3
+    if player.city_completed:
+        score += 2
+    if player.first_finished:
+        score += 2
+
+    player.score = score
+
         
 
 def main():
     game = Game()
-    game.game_turn()
+    game.play_game()
 
             
 if __name__ == '__main__':
